@@ -411,7 +411,7 @@ Adjust parameters on the left controls, observe real-time animations, and export
 # Page 1: Overview
 # -----------------------------
 if page == "🏠 Lab Overview":
-    st.subheader("Welcome to the Virtual Chemistry & Applied Physics Laboratory")
+    st.subheader("Welcome to the Virtual Chemistry Laboratory")
     st.write("This interactive platform designed for **1st Year BTech Students** brings core experiments to life with dynamic physics engines and visual animations.")
 
     col1, col2 = st.columns(2)
@@ -845,4 +845,4 @@ elif page == "❓ Viva Voce Quiz":
         st.success("Correct! $IR_i$ drop causes the instantaneous step change.")
 
 st.markdown("---")
-st.caption("Virtual Chemistry & Physics Laboratory • Developed for First-Year BTech Engineering Courses")
+st.caption("Virtual Chemistry Laboratory • Developed for First-Year BTech Engineering Courses")
