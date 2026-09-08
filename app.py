@@ -188,7 +188,7 @@ def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
     alpha = p["alpha0"] * np.sqrt(excess) / np.maximum(hv, 1e-9) + p["alpha0"] * 0.002
     absorbance = alpha * (thickness_mm / 10.0) / 2.302585
     
-    rng = np.random.defaultrng(42)
+    rng = np.random.default_rng(42)
     if noise_pct > 0:
         absorbance *= 1 + rng.normal(0, noise_pct / 100, len(absorbance))
     absorbance = np.clip(absorbance, 1e-5, None)
