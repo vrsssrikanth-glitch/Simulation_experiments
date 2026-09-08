@@ -2,3 +2,4 @@ streamlit
 numpy
 pandas
 matplotlib
+plotly.graph_objects as go
