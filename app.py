@@ -2,43 +2,73 @@ import io
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
+# -----------------------------
+# Page Configuration & Styling
+# -----------------------------
 st.set_page_config(
-    page_title="Virtual Chemistry Lab Simulations",
-    page_icon="🔬",
+    page_title="Virtual Chemistry Lab | BTech First Year",
+    page_icon="🧪",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def style_plot(ax, title, xlabel, ylabel):
-    ax.set_title(title, fontweight="bold")
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.grid(True, alpha=0.25)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+st.markdown("""
+<style>
+/* Modern Glassmorphic Header */
+.main-header {
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    padding: 22px 28px;
+    border-radius: 14px;
+    color: white;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+.main-header h1 { margin: 0; font-size: 30px; font-weight: 700; color: #ffffff; }
+.main-header p { margin: 6px 0 0; opacity: 0.9; font-size: 15px; }
 
+/* Visual Card Callouts */
+.concept-card {
+    background-color: #f8fa0c10;
+    border-left: 5px solid #2a5298;
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+}
+.metric-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------
+# Helper Simulation Functions
+# -----------------------------
+SEMICONDUCTORS = {
+    "ZnO (Zinc Oxide)": {"Eg": 3.28, "alpha0": 1.0e4, "use": "UV absorbers, sunscreens, transparent electronics"},
+    "GaAs (Gallium Arsenide)": {"Eg": 1.42, "alpha0": 1.5e4, "use": "High-efficiency solar cells, optoelectronics"},
+    "Si (Silicon)": {"Eg": 1.12, "alpha0": 1.0e4, "use": "Microchips, commercial photovoltaic solar cells"},
+    "CdS (Cadmium Sulfide)": {"Eg": 2.42, "alpha0": 1.2e4, "use": "Quantum dots, photoresistors"},
+    "TiO₂ (Titanium Dioxide)": {"Eg": 3.20, "alpha0": 1.0e4, "use": "Photocatalysis, self-cleaning coatings"},
+}
 
 def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
                 r_internal, charge_current, discharge_current,
-                cutoff_v, time_step, temperature):
-    """
-    Educational equivalent-circuit simulation.
-    Li-ion: capacity is Ah, charge/discharge follows a SOC-dependent OCV model.
-    Supercapacitor: capacitance is F and V = Q/C with ESR.
-    """
+                cutoff_v, time_step):
+    """Simulates charging and discharging curves with internal resistance effects."""
     if cell_type == "Lithium-ion Battery":
-        # SOC-dependent open-circuit voltage model.
         def ocv(soc):
             soc = np.clip(soc, 0, 1)
             return 3.0 + 0.75 * soc + 0.10 * np.log10(np.maximum(soc, 1e-5) / np.maximum(1-soc, 1e-5)) * 0.05
 
-        # Start around 20% SOC and charge to ~100%, then discharge.
-        soc0 = 0.20
+        soc0 = 0.15
         charge_seconds = max((1.0 - soc0) * capacity_ah / max(charge_current, 1e-9) * 3600, 1)
         n_charge = int(np.ceil(charge_seconds / time_step)) + 1
         t_charge = np.arange(n_charge) * time_step
@@ -46,7 +76,6 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
         v_charge = ocv(soc_charge) + r_internal * charge_current
         v_charge = np.clip(v_charge, 2.8, 4.25)
 
-        # Discharge from 100% until cutoff voltage.
         soc = 1.0
         rows = []
         t = 0.0
@@ -65,6 +94,24 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
         i_dis = d[:, 2] if len(d) else np.array([discharge_current])
         cap_dis = d[:, 3] if len(d) else np.array([0.0])
 
+        charge_df = pd.DataFrame({
+            "Time (s)": t_charge,
+            "Voltage (V)": v_charge,
+            "Current (A)": np.full_like(t_charge, charge_current),
+            "Capacity (Ah)": charge_current * t_charge / 3600,
+            "SOC (%)": soc_charge * 100,
+            "Phase": "Charging",
+        })
+        dis_df = pd.DataFrame({
+            "Time (s)": t_dis + t_charge[-1],
+            "Voltage (V)": v_dis,
+            "Current (A)": -i_dis,
+            "Capacity (Ah)": cap_dis,
+            "SOC (%)": (1 - cap_dis / capacity_ah) * 100,
+            "Phase": "Discharging",
+        })
+        df = pd.concat([charge_df, dis_df], ignore_index=True)
+        
         t_charge_h = t_charge[-1] / 3600
         t_dis_h = t_dis[-1] / 3600
         energy_wh = np.trapezoid(v_dis * i_dis, t_dis) / 3600 if len(t_dis) > 1 else 0
@@ -72,42 +119,23 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
         discharge_ah = np.trapezoid(i_dis, t_dis) / 3600 if len(t_dis) > 1 else 0
         efficiency = (discharge_ah / charge_ah * 100) if charge_ah > 0 else 0
 
-        charge_df = pd.DataFrame({
-            "Time (s)": t_charge,
-            "Voltage (V)": v_charge,
-            "Current (A)": np.full_like(t_charge, charge_current),
-            "Capacity (Ah)": charge_current * t_charge / 3600,
-            "SOC": soc_charge * 100,
-            "Phase": "Charge",
-        })
-        dis_df = pd.DataFrame({
-            "Time (s)": t_dis + t_charge[-1],
-            "Voltage (V)": v_dis,
-            "Current (A)": -i_dis,
-            "Capacity (Ah)": cap_dis,
-            "SOC": (1 - cap_dis / capacity_ah) * 100,
-            "Phase": "Discharge",
-        })
-        df = pd.concat([charge_df, dis_df], ignore_index=True)
         return df, {
-            "Charge Time (h)": t_charge_h,
-            "Discharge Time (h)": t_dis_h,
-            "Energy Discharged (Wh)": energy_wh,
-            "Coulombic Efficiency (%)": efficiency,
+            "Charge Time": f"{t_charge_h:.2f} hrs",
+            "Discharge Time": f"{t_dis_h:.2f} hrs",
+            "Energy Delivered": f"{energy_wh:.2f} Wh",
+            "Coulombic Efficiency": f"{efficiency:.1f}%",
         }
 
-    # Supercapacitor
+    # Supercapacitor Simulation
     v_min = max(cutoff_v, 0.05)
     v_max = nominal_v
     q_max = capacitance_f * v_max
     charge_seconds = q_max / max(charge_current, 1e-9)
     n_charge = int(np.ceil(charge_seconds / time_step)) + 1
     t_charge = np.arange(n_charge) * time_step
-    v_charge = np.minimum(v_min + charge_current * t_charge / capacitance_f, v_max)
-    v_charge += r_internal * charge_current
-    v_charge = np.clip(v_charge, 0, v_max * 1.02)
+    v_charge = np.minimum(v_min + charge_current * t_charge / capacitance_f, v_max) + r_internal * charge_current
+    v_charge = np.clip(v_charge, 0, v_max * 1.05)
 
-    # Discharge: ideal capacitor V = V0 - It/C with ESR drop.
     t_max = max(capacitance_f * max(v_max - v_min, 0) / max(discharge_current, 1e-9), time_step)
     n_dis = int(np.ceil(t_max / time_step)) + 1
     t_dis = np.arange(n_dis) * time_step
@@ -115,25 +143,23 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
     keep = v_dis > v_min
     t_dis, v_dis = t_dis[keep], v_dis[keep]
     if len(t_dis) == 0:
-        t_dis = np.array([0.0])
-        v_dis = np.array([v_min])
-    cap_removed = discharge_current * t_dis / 3600
+        t_dis, v_dis = np.array([0.0]), np.array([v_min])
 
     charge_df = pd.DataFrame({
         "Time (s)": t_charge,
         "Voltage (V)": v_charge,
         "Current (A)": np.full_like(t_charge, charge_current),
         "Capacity (Ah)": charge_current * t_charge / 3600,
-        "SOC": np.clip((v_charge - v_min) / (v_max - v_min) * 100, 0, 100),
-        "Phase": "Charge",
+        "SOC (%)": np.clip((v_charge - v_min) / (v_max - v_min) * 100, 0, 100),
+        "Phase": "Charging",
     })
     dis_df = pd.DataFrame({
         "Time (s)": t_dis + t_charge[-1],
         "Voltage (V)": v_dis,
         "Current (A)": -np.full_like(t_dis, discharge_current),
-        "Capacity (Ah)": cap_removed,
-        "SOC": np.clip((v_dis - v_min) / (v_max - v_min) * 100, 0, 100),
-        "Phase": "Discharge",
+        "Capacity (Ah)": discharge_current * t_dis / 3600,
+        "SOC (%)": np.clip((v_dis - v_min) / (v_max - v_min) * 100, 0, 100),
+        "Phase": "Discharging",
     })
     df = pd.concat([charge_df, dis_df], ignore_index=True)
 
@@ -142,404 +168,328 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
     energy_wh = np.trapezoid(v_dis * discharge_current, t_dis) / 3600 if len(t_dis) > 1 else 0
     charge_ah = np.trapezoid(np.full_like(t_charge, charge_current), t_charge) / 3600
     discharge_ah = np.trapezoid(np.full_like(t_dis, discharge_current), t_dis) / 3600
-    efficiency = discharge_ah / charge_ah * 100 if charge_ah > 0 else 0
+    efficiency = (discharge_ah / charge_ah * 100) if charge_ah > 0 else 0
 
     return df, {
-        "Charge Time (h)": t_charge_h,
-        "Discharge Time (h)": t_dis_h,
-        "Energy Discharged (Wh)": energy_wh,
-        "Coulombic Efficiency (%)": efficiency,
+        "Charge Time": f"{t_charge_h * 3600:.1f} sec",
+        "Discharge Time": f"{t_dis_h * 3600:.1f} sec",
+        "Energy Delivered": f"{energy_wh:.4f} Wh",
+        "Coulombic Efficiency": f"{efficiency:.1f}%",
     }
 
 
-SEMICONDUCTORS = {
-    "ZnO": {"Eg": 3.28, "alpha0": 1.0e4},
-    "GaAs": {"Eg": 1.42, "alpha0": 1.5e4},
-    "Si": {"Eg": 1.12, "alpha0": 1.0e4},
-    "CdS": {"Eg": 2.42, "alpha0": 1.2e4},
-    "TiO₂": {"Eg": 3.20, "alpha0": 1.0e4},
-}
-
-
-def bandgap_sim(material, thickness_mm, wl_min, wl_max, step_nm, noise_pct, direct_allowed=True):
-    p = SEMICONDUCTORS[material]
+def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
+    p = SEMICONDUCTORS[material_key]
     eg = p["Eg"]
     wl = np.arange(wl_min, wl_max + step_nm, step_nm)
-    hv = 1239.841984 / wl  # eV
+    hv = 1239.841984 / wl  # photon energy in eV
 
-    # Synthetic direct-allowed semiconductor absorption:
-    # alpha = alpha0 * sqrt(hv-Eg)/hv above Eg.
     excess = np.maximum(hv - eg, 0)
-    alpha = p["alpha0"] * np.sqrt(excess) / np.maximum(hv, 1e-9)
-    # Add a small sub-gap baseline and measurement-like variation.
-    alpha += p["alpha0"] * 0.002
+    alpha = p["alpha0"] * np.sqrt(excess) / np.maximum(hv, 1e-9) + p["alpha0"] * 0.002
     absorbance = alpha * (thickness_mm / 10.0) / 2.302585
-    rng = np.random.default_rng(42)
+    
+    rng = np.random.defaultrng(42)
     if noise_pct > 0:
         absorbance *= 1 + rng.normal(0, noise_pct / 100, len(absorbance))
     absorbance = np.clip(absorbance, 1e-5, None)
+    
     alpha_calc = 2.302585 * absorbance / (thickness_mm / 10.0)
     tauc = (alpha_calc * hv) ** 2
 
-    # Automatic fit around the transition. Search windows and choose the best R².
-    candidates = []
-    lo = eg * 0.90
-    hi = eg * 1.10
-    mask = (hv >= lo) & (hv <= hi) & (alpha_calc > p["alpha0"] * 0.01)
-    x = hv[mask]
-    y = tauc[mask]
-    if len(x) >= 5:
-        for frac_lo in np.linspace(0.00, 0.35, 8):
-            for frac_hi in np.linspace(0.65, 1.00, 8):
-                a = int(frac_lo * len(x))
-                b = max(a + 5, int(frac_hi * len(x)))
-                xx, yy = x[a:b], y[a:b]
-                if len(xx) < 5:
-                    continue
-                m, c = np.polyfit(xx, yy, 1)
-                pred = m * xx + c
-                ss_res = np.sum((yy - pred) ** 2)
-                ss_tot = np.sum((yy - np.mean(yy)) ** 2)
-                r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
-                intercept = -c / m if m != 0 else np.nan
-                if 0.5 * eg < intercept < 1.5 * eg and m > 0:
-                    candidates.append((r2, intercept, xx.min(), xx.max(), m, c))
-
-    if candidates:
-        r2, eg_fit, fit_lo, fit_hi, m, c = max(candidates, key=lambda z: z[0])
+    # Automatic linear fitting on steep region
+    mask = (hv >= eg * 0.92) & (hv <= eg * 1.15) & (alpha_calc > p["alpha0"] * 0.01)
+    x_fit, y_fit = hv[mask], tauc[mask]
+    
+    if len(x_fit) >= 4:
+        m, c = np.polyfit(x_fit, y_fit, 1)
+        eg_fit = -c / m if m != 0 else eg
     else:
-        eg_fit, r2, fit_lo, fit_hi, m, c = eg, 0.0, eg * 0.9, eg * 1.1, 1, -eg
+        m, c, eg_fit = 1.0, -eg, eg
 
     edge_nm = 1239.841984 / eg_fit
+
     df = pd.DataFrame({
         "Wavelength (nm)": wl,
+        "Photon Energy hν (eV)": hv,
         "Absorbance (A)": absorbance,
-        "Absorption coefficient α (cm⁻¹)": alpha_calc,
-        "Photon energy hν (eV)": hv,
+        "Absorption Coeff α (cm⁻¹)": alpha_calc,
         "(αhν)² (eV²cm⁻²)": tauc,
     })
+
     return df, {
-        "Band Gap Eg (eV)": eg_fit,
-        "R²": r2,
-        "Fit Range (eV)": f"{fit_lo:.2f} – {fit_hi:.2f}",
-        "Absorption Edge (nm)": edge_nm,
-        "Reference Eg (eV)": eg,
+        "Theoretical Eg": f"{eg:.2f} eV",
+        "Calculated Eg": f"{eg_fit:.2f} eV",
+        "Absorption Edge": f"{edge_nm:.1f} nm",
+        "Primary Application": p["use"],
     }, (m, c)
 
 
 # -----------------------------
-# CSS
+# App Layout & Header
 # -----------------------------
 st.markdown("""
-<style>
-.main-header {
-    background: linear-gradient(90deg,#0b2947,#123f70);
-    padding: 16px 24px;
-    border-radius: 12px;
-    color: white;
-    margin-bottom: 18px;
-}
-.main-header h1 { margin: 0; font-size: 28px; }
-.main-header p { margin: 4px 0 0; opacity: .85; }
-.card {
-    border: 1px solid #d8e1eb;
-    border-radius: 12px;
-    padding: 16px;
-    background: white;
-}
-.result {
-    border: 1px solid #d8e1eb;
-    border-radius: 10px;
-    padding: 10px;
-    text-align: center;
-}
-.small-note { font-size: 13px; color: #536273; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
 <div class="main-header">
-<h1>🔬 Virtual Lab Simulations</h1>
-<p>Engineering Chemistry / Applied Chemistry Laboratory</p>
+    <h1>🧪 Virtual Engineering Chemistry Laboratory</h1>
+    <p>Interactive Simulations for First-Year BTech Students • Department of Chemistry</p>
 </div>
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# Sidebar
+# Sidebar Navigation
 # -----------------------------
-st.sidebar.title("Virtual Lab")
+st.sidebar.title("🔬 Navigation")
 page = st.sidebar.radio(
-    "Select Experiment",
+    "Select Module:",
     [
-        "🏠 Home",
-        "🔋 1. Charge–Discharge Characteristics",
-        "💡 2. Semiconductor Band Gap",
-        "📖 Theory",
-        "🧮 Calculator",
+        "🏠 Lab Overview",
+        "🔋 Exp 1: Battery & Supercap Testing",
+        "💡 Exp 2: Semiconductor Band Gap",
+        "📖 Theory & Formulations",
+        "❓ Viva Voce Quiz",
     ],
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
-**How to use**
-1. Select an experiment.
-2. Set the parameters.
-3. Click **Run Simulation**.
-4. Analyze graphs and extracted results.
-5. Download the simulated data.
+st.sidebar.info("""
+**Student Tip:** 
+Adjust parameters on the left controls, observe changes in real-time on interactive charts, and export data for your lab record reports.
 """)
-st.sidebar.caption("Educational simulation — not a substitute for laboratory measurements.")
 
 # -----------------------------
-# Home
+# Page 1: Overview
 # -----------------------------
-if page == "🏠 Home":
-    st.subheader("Virtual Chemistry Laboratory")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.info("### 🔋 Experiment 1\n**Determination of the charge–discharge characteristics of a lithium-ion battery / supercapacitor cell.**\n\nStudy voltage, current, capacity, charge time, discharge time, energy and efficiency.")
-    with c2:
-        st.info("### 💡 Experiment 2\n**Determination of the band-gap energy of a semiconductor sample from its optical absorption edge.**\n\nStudy absorbance, absorption coefficient, photon energy and the Tauc plot.")
-    st.markdown("### Learning outcomes")
+if page == "🏠 Lab Overview":
+    st.subheader("Welcome to the Virtual Chemistry Laboratory")
+    st.write("This interactive platform designed for **1st Year BTech Chemistry** helps you perform, visualize, and analyze core experiments virtually.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        ### 🔋 Experiment 1
+        **Energy Storage Systems**
+        - Compare **Lithium-ion Batteries** vs **Supercapacitors**.
+        - Measure charging/discharging time curves.
+        - Observe **Internal Resistance ($R_i$ / ESR)** and Ohmic loss drops.
+        - Calculate **Coulombic Efficiency** & Energy Density.
+        """)
+    with col2:
+        st.markdown("""
+        ### 💡 Experiment 2
+        **Semiconductor Photophysics**
+        - Determine optical bandgap ($E_g$) using **UV-Vis Absorption Spectrometry**.
+        - Plot and analyze **Tauc Plots** $((\alpha h\nu)^2 \text{ vs } h\nu)$.
+        - Convert optical wavelengths to photon energy ($eV$).
+        - Extrapolate linear regions to find absorption cut-offs.
+        """)
+
+    st.markdown("---")
+    st.success("👈 Choose an experiment from the sidebar to start your virtual experiment!")
+
+# -----------------------------
+# Page 2: Experiment 1
+# -----------------------------
+elif page == "🔋 Exp 1: Battery & Supercap Testing":
+    st.header("Experiment 1: Charge-Discharge Characteristics")
+    
     st.markdown("""
-    - Interpret charge and discharge curves of energy-storage devices.
-    - Understand the effect of internal resistance / ESR.
-    - Determine approximate energy and Coulombic efficiency from simulated data.
-    - Convert optical wavelength to photon energy.
-    - Calculate the absorption coefficient from Beer–Lambert law.
-    - Determine semiconductor band gap using a Tauc plot.
-    """)
-    st.success("Tip: Run both experiments, inspect the plots, then download the generated CSV data for student records or assignments.")
+    <div class="concept-card">
+    <b>💡 What are you testing?</b> Energy storage devices deliver stored chemical or electrostatic energy. 
+    Notice how voltage instantly jumps up during charge or drops down during discharge—this instantaneous change is due to internal resistance (IR drop / ESR).
+    </div>
+    """, unsafe_allow_html=True)
 
-# -----------------------------
-# Experiment 1
-# -----------------------------
-elif page == "🔋 1. Charge–Discharge Characteristics":
-    st.header("1. Determination of Charge–Discharge Characteristics")
-    st.caption("Educational equivalent-circuit simulation for a lithium-ion battery or supercapacitor cell.")
+    col_ctrl, col_chart = st.columns([1, 2])
 
-    left, right = st.columns([1, 1.55])
+    with col_ctrl:
+        st.subheader("🛠️ Control Panel")
+        cell_type = st.selectbox("Device Type", ["Lithium-ion Battery", "Supercapacitor"])
 
-    with left:
-        st.subheader("1. Setup & Parameters")
-        cell = st.selectbox("Select Cell Type", ["Lithium-ion Battery", "Supercapacitor"])
-
-        if cell == "Lithium-ion Battery":
-            nominal_v = st.number_input("Nominal Voltage (V)", 2.0, 5.0, 3.7, 0.1)
-            capacity = st.number_input("Capacity (Ah)", 0.05, 50.0, 2.2, 0.05)
+        if cell_type == "Lithium-ion Battery":
+            nominal_v = st.slider("Nominal Voltage (V)", 3.0, 4.2, 3.7, 0.1)
+            capacity = st.number_input("Rated Capacity (Ah)", 0.5, 10.0, 2.2, 0.1)
             capacitance = 0.0
+            r_internal = st.slider("Internal Resistance R_i (Ω)", 0.01, 0.50, 0.08, 0.01)
+            cutoff_v = st.slider("Cut-off Voltage (V)", 2.5, 3.2, 2.8, 0.1)
         else:
-            nominal_v = st.number_input("Maximum Voltage (V)", 0.5, 100.0, 2.7, 0.1)
-            capacitance = st.number_input("Capacitance (F)", 1.0, 100000.0, 1000.0, 10.0)
+            nominal_v = st.slider("Max Voltage (V)", 1.5, 5.0, 2.7, 0.1)
+            capacitance = st.number_input("Capacitance (Farads)", 10.0, 5000.0, 500.0, 50.0)
             capacity = 0.0
+            r_internal = st.slider("Equivalent Series Resistance ESR (Ω)", 0.005, 0.200, 0.030, 0.005)
+            cutoff_v = st.slider("Cut-off Voltage (V)", 0.1, 1.5, 0.5, 0.1)
 
-        r_internal = st.number_input("Internal Resistance / ESR (Ω)", 0.001, 10.0, 0.08 if cell == "Lithium-ion Battery" else 0.03, 0.001)
-        charge_current = st.number_input("Charge Current (A)", 0.01, 100.0, 1.0, 0.05)
-        discharge_current = st.number_input("Discharge Current (A)", 0.01, 100.0, 1.0, 0.05)
-        cutoff_v = st.number_input("Cut-off Voltage (V)", 0.1, 5.0, 2.75 if cell == "Lithium-ion Battery" else 1.0, 0.05)
-        temperature = st.number_input("Temperature (°C)", -20.0, 80.0, 25.0, 1.0)
-        time_step = st.number_input("Time Step (s)", 0.1, 60.0, 2.0, 0.1)
+        charge_curr = st.number_input("Charge Current (A)", 0.1, 20.0, 1.5, 0.1)
+        dis_curr = st.number_input("Discharge Current (A)", 0.1, 20.0, 2.0, 0.1)
 
-        run = st.button("▶ Run Simulation", type="primary", use_container_width=True)
+    df, summary = battery_sim(cell_type, nominal_v, capacity, capacitance, r_internal, charge_curr, dis_curr, cutoff_v, 2.0)
 
-    if run or "battery_df" not in st.session_state:
-        df, results = battery_sim(
-            cell, nominal_v, capacity, capacitance, r_internal,
-            charge_current, discharge_current, cutoff_v, time_step, temperature
-        )
-        st.session_state.battery_df = df
-        st.session_state.battery_results = results
+    with col_chart:
+        st.subheader("📊 Live Characteristic Curves")
+        
+        # Interactive Plotly Chart
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                            subplot_titles=("Terminal Voltage vs Time", "Current vs Time"))
 
-    df = st.session_state.battery_df
-    results = st.session_state.battery_results
+        # Voltage curve
+        chg_data = df[df["Phase"] == "Charging"]
+        dis_data = df[df["Phase"] == "Discharging"]
 
-    with right:
-        st.subheader("2. Results")
-        tab1, tab2, tab3 = st.tabs(["Voltage vs Time", "Current vs Time", "Capacity vs Time"])
+        fig.add_trace(go.Scatter(x=chg_data["Time (s)"], y=chg_data["Voltage (V)"], 
+                                 mode='lines', name='Charging Phase', line=dict(color='#2b6cb0', width=3)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=dis_data["Time (s)"], y=dis_data["Voltage (V)"], 
+                                 mode='lines', name='Discharging Phase', line=dict(color='#e53e3e', width=3)), row=1, col=1)
 
-        with tab1:
-            fig, ax = plt.subplots(figsize=(8, 4.2))
-            for phase, grp in df.groupby("Phase"):
-                ax.plot(grp["Time (s)"], grp["Voltage (V)"], label=phase)
-            style_plot(ax, "Charge–Discharge Voltage Characteristic", "Time (s)", "Voltage (V)")
-            ax.legend()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
+        # Current curve
+        fig.add_trace(go.Scatter(x=df["Time (s)"], y=df["Current (A)"], 
+                                 mode='lines', name='Current (A)', line=dict(color='#319795', width=2)), row=2, col=1)
 
-        with tab2:
-            fig, ax = plt.subplots(figsize=(8, 4.2))
-            ax.plot(df["Time (s)"], df["Current (A)"])
-            style_plot(ax, "Current vs Time", "Time (s)", "Current (A)")
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
+        fig.update_layout(height=450, margin=dict(l=20, r=20, t=30, b=20), hovermode="x unified", template="plotly_white")
+        fig.update_yaxes(title_text="Voltage (V)", row=1, col=1)
+        fig.update_yaxes(title_text="Current (A)", row=2, col=1)
+        fig.update_xaxes(title_text="Time (seconds)", row=2, col=1)
 
-        with tab3:
-            fig, ax = plt.subplots(figsize=(8, 4.2))
-            for phase, grp in df.groupby("Phase"):
-                ax.plot(grp["Time (s)"], grp["Capacity (Ah)"], label=phase)
-            style_plot(ax, "Capacity vs Time", "Time (s)", "Capacity (Ah)")
-            ax.legend()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Extracted Parameters")
-    a, b, c, d = st.columns(4)
-    a.metric("Charge Time", f"{results['Charge Time (h)']:.2f} h")
-    b.metric("Discharge Time", f"{results['Discharge Time (h)']:.2f} h")
-    c.metric("Energy Discharged", f"{results['Energy Discharged (Wh)']:.2f} Wh")
-    d.metric("Coulombic Efficiency", f"{results['Coulombic Efficiency (%)']:.1f}%")
+    # Metric Cards
+    st.subheader("📋 Experimental Results")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Charging Duration", summary["Charge Time"])
+    m2.metric("Discharging Duration", summary["Discharge Time"])
+    m3.metric("Energy Delivered", summary["Energy Delivered"])
+    m4.metric("Coulombic Efficiency", summary["Coulombic Efficiency"])
 
-    with st.expander("Show simulated data table"):
-        st.dataframe(df, use_container_width=True, height=300)
-
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇ Download Charge–Discharge CSV", csv, "charge_discharge_simulation.csv", "text/csv")
-
-    st.markdown("**Chemistry model:** Li-ion simulation uses a SOC-dependent open-circuit-voltage model plus internal-resistance polarization. The supercapacitor uses \(V=Q/C\) with ESR. These are educational models and do not represent a particular commercial cell.")
+    with st.expander("📄 View Generated Data Table"):
+        st.dataframe(df, use_container_width=True)
+        st.download_button("📥 Download Experiment Data (CSV)", df.to_csv(index=False), "battery_discharge_data.csv")
 
 # -----------------------------
-# Experiment 2
+# Page 3: Experiment 2
 # -----------------------------
-elif page == "💡 2. Semiconductor Band Gap":
-    st.header("2. Determination of Band-Gap Energy from Optical Absorption Edge")
-    st.caption("Synthetic UV–Vis absorption simulation with automatic Tauc-plot analysis.")
-
-    left, right = st.columns([1, 1.55])
-
-    with left:
-        st.subheader("1. Setup & Parameters")
-        material = st.selectbox("Select Semiconductor", list(SEMICONDUCTORS.keys()))
-        thickness = st.number_input("Sample Thickness (mm)", 0.01, 10.0, 1.0, 0.01)
-        wl_min, wl_max = st.slider("Wavelength Range (nm)", 200, 1200, (300, 800), 10)
-        step = st.number_input("Wavelength Step (nm)", 1, 20, 2, 1)
-        noise = st.number_input("Add Measurement Noise (%)", 0.0, 20.0, 2.0, 0.5)
-        show_points = st.checkbox("Show Raw Data Points", True)
-        run2 = st.button("▶ Run Simulation", type="primary", use_container_width=True)
-
-    if run2 or "band_df" not in st.session_state or st.session_state.get("band_material") != material:
-        bdf, bres, fit = bandgap_sim(material, thickness, wl_min, wl_max, step, noise)
-        st.session_state.band_df = bdf
-        st.session_state.band_results = bres
-        st.session_state.band_fit = fit
-        st.session_state.band_material = material
-
-    bdf = st.session_state.band_df
-    bres = st.session_state.band_results
-    m, c = st.session_state.band_fit
-
-    with right:
-        st.subheader("2. Results")
-        tab1, tab2 = st.tabs(["Absorbance Spectrum", "Tauc Plot ((αhν)² vs hν)"])
-
-        with tab1:
-            fig, ax = plt.subplots(figsize=(8, 4.2))
-            ax.plot(bdf["Wavelength (nm)"], bdf["Absorbance (A)"])
-            ax.invert_xaxis()
-            style_plot(ax, f"Optical Absorption Spectrum — {material}", "Wavelength (nm)", "Absorbance (A)")
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-
-        with tab2:
-            fig, ax = plt.subplots(figsize=(8, 4.2))
-            x = bdf["Photon energy hν (eV)"].to_numpy()
-            y = bdf["(αhν)² (eV²cm⁻²)"].to_numpy()
-            if show_points:
-                ax.scatter(x, y, s=12, label="Data")
-            fit_mask = (x >= float(bres["Fit Range (eV)"].split("–")[0])) & (x <= float(bres["Fit Range (eV)"].split("–")[1]))
-            xx = np.linspace(x[fit_mask].min(), x[fit_mask].max(), 100) if fit_mask.any() else np.linspace(m * 0 + 1, 4, 100)
-            ax.plot(xx, m * xx + c, label="Linear fit")
-            ax.axvline(bres["Band Gap Eg (eV)"], linestyle="--", label=f"Eg = {bres['Band Gap Eg (eV)']:.2f} eV")
-            style_plot(ax, "Tauc Plot — Direct Allowed Transition", "Photon energy hν (eV)", "(αhν)² (eV² cm⁻²)")
-            ax.legend()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-
-    st.subheader("Extracted Parameters")
-    a, b, c1, d = st.columns(4)
-    a.metric("Calculated Band Gap", f"{bres['Band Gap Eg (eV)']:.2f} eV")
-    b.metric("Fit Range", bres["Fit Range (eV)"])
-    c1.metric("R²", f"{bres['R²']:.4f}")
-    d.metric("Absorption Edge", f"≈ {bres['Absorption Edge (nm)']:.0f} nm")
-
-    with st.expander("Show simulated optical data"):
-        st.dataframe(bdf, use_container_width=True, height=300)
-
-    csv = bdf.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇ Download Band-Gap CSV", csv, "semiconductor_bandgap_simulation.csv", "text/csv")
-
-    st.info("Analysis uses the direct-allowed Tauc relation: (αhν)² ∝ (hν − Eg). The x-intercept of the fitted linear region gives Eg. For an actual sample, use experimentally measured absorbance and select the correct transition model.")
-
-# -----------------------------
-# Theory
-# -----------------------------
-elif page == "📖 Theory":
-    st.header("Theory")
-
-    st.subheader("Experiment 1 — Charge–Discharge Characteristics")
+elif page == "💡 Exp 2: Semiconductor Band Gap":
+    st.header("Experiment 2: Band Gap Energy Determination (UV-Vis)")
+    
     st.markdown("""
-    **Lithium-ion battery:** During charging, electrical energy is stored chemically and the terminal voltage rises.
-    During discharge, the stored energy is delivered to the external load. Internal resistance produces an
-    instantaneous voltage drop/rise approximately described by **V = OCV ± IR**.
+    <div class="concept-card">
+    <b>💡 What are you testing?</b> When light shines on a semiconductor, photons with energy greater than the bandgap ($h\\nu \\ge E_g$) get absorbed, kicking electrons from the valence band to the conduction band. 
+    By plotting a <b>Tauc Plot</b> $((\\alpha h\\nu)^2 \\text{ vs } h\\nu)$, we can linearly extrapolate the absorption edge to find the exact energy gap $E_g$.
+    </div>
+    """, unsafe_allow_html=True)
 
-    **Supercapacitor:** Charge and voltage are related by:
+    col_ctrl, col_chart = st.columns([1, 2])
 
-    **Q = CV**
+    with col_ctrl:
+        st.subheader("🛠️ Control Panel")
+        selected_mat = st.selectbox("Select Semiconductor", list(SEMICONDUCTORS.keys()))
+        thickness = st.slider("Sample Thickness (mm)", 0.1, 5.0, 1.0, 0.1)
+        noise_level = st.slider("Simulated Sensor Noise (%)", 0.0, 10.0, 2.0, 0.5)
 
-    and, for constant-current discharge,
+        st.markdown("---")
+        st.markdown("**Fitting Mode:**")
+        fit_mode = st.radio("Extrapolation Method", ["Auto Fit", "Manual Tangent Slider"])
+        
+    df, summary, (auto_m, auto_c) = bandgap_sim(selected_mat, thickness, 250, 900, 2, noise_level)
 
-    **V(t) = V₀ − (I/C)t**
+    if fit_mode == "Manual Tangent Slider":
+        st.sidebar.markdown("### Manual Tangent Adjuster")
+        manual_eg = st.sidebar.slider("Set Tangent Intercept Eg (eV)", 0.5, 4.5, float(summary["Theoretical Eg"].split()[0]), 0.02)
+        manual_slope = st.sidebar.slider("Set Tangent Slope", 0.1, 10.0, 2.5, 0.1) * 1e8
+        m, c = manual_slope, -manual_slope * manual_eg
+        calc_eg = manual_eg
+    else:
+        m, c = auto_m, auto_c
+        calc_eg = float(summary["Calculated Eg"].split()[0])
 
-    The energy stored in an ideal capacitor is:
+    with col_chart:
+        tab_spec, tab_tauc = st.tabs(["1. UV-Vis Absorbance Spectrum", "2. Tauc Plot ((αhν)² vs hν)"])
 
-    **E = ½CV²**
+        with tab_spec:
+            fig_abs = go.Figure()
+            fig_abs.add_trace(go.Scatter(x=df["Wavelength (nm)"], y=df["Absorbance (A)"],
+                                         mode='lines', name='Absorbance', line=dict(color='#805ad5', width=3)))
+            fig_abs.update_layout(title="Absorbance (A) vs Wavelength (nm)", xaxis_title="Wavelength λ (nm)",
+                                  yaxis_title="Absorbance A", template="plotly_white", height=400)
+            st.plotly_chart(fig_abs, use_container_width=True)
 
-    Coulombic efficiency can be estimated from:
+        with tab_tauc:
+            fig_tauc = go.Figure()
+            # Raw scatter data
+            fig_tauc.add_trace(go.Scatter(x=df["Photon Energy hν (eV)"], y=df["(αhν)² (eV²cm⁻²)"],
+                                          mode='markers', name='Data Points', marker=dict(color='#3182ce', size=5)))
 
-    **η = (Q_discharge / Q_charge) × 100%**
-    """)
+            # Extrapolation line
+            x_line = np.linspace(calc_eg - 0.3, calc_eg + 0.8, 50)
+            y_line = m * x_line + c
+            fig_tauc.add_trace(go.Scatter(x=x_line, y=y_line, mode='lines', name='Linear Extrapolation',
+                                          line=dict(color='#e53e3e', width=2, dash='dash')))
 
-    st.subheader("Experiment 2 — Semiconductor Band Gap")
+            # Vertical Band gap marker
+            fig_tauc.add_vline(x=calc_eg, line_width=2, line_dash="dot", line_color="green",
+                               annotation_text=f"Eg = {calc_eg:.2f} eV", annotation_position="top left")
+
+            fig_tauc.update_layout(title="Tauc Plot: (αhν)² vs Photon Energy hν", xaxis_title="Photon Energy hν (eV)",
+                                   yaxis_title="(αhν)² [eV² cm⁻²]", template="plotly_white", height=400,
+                                   yaxis_range=[0, df["(αhν)² (eV²cm⁻²)"].max() * 1.05])
+            st.plotly_chart(fig_tauc, use_container_width=True)
+
+    # Result Summary
+    st.subheader("📋 Derived Band Gap Analysis")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Theoretical Eg", summary["Theoretical Eg"])
+    m2.metric("Extrapolated Eg", f"{calc_eg:.2f} eV")
+    m3.metric("Absorption Cut-off Edge", summary["Absorption Edge"])
+    m4.metric("Real-World Use", summary["Primary Application"])
+
+    with st.expander("📄 View Derived Optical Parameters Table"):
+        st.dataframe(df, use_container_width=True)
+        st.download_button("📥 Download Optical Data (CSV)", df.to_csv(index=False), "semiconductor_bandgap_data.csv")
+
+# -----------------------------
+# Page 4: Theory
+# -----------------------------
+elif page == "📖 Theory & Formulations":
+    st.header("Fundamental Equations & Concepts")
+
     st.markdown("""
-    The photon energy corresponding to wavelength λ is:
+    ### 1. Lithium-Ion & Supercapacitor Characterization
+    * **Ohmic Resistance Drop (IR Drop):**
+      $$V_{\text{terminal}} = V_{\text{ocv}} \\pm I \\cdot R_i$$
+    * **Supercapacitor Capacitance Formula:**
+      $$Q = C \\cdot V \\implies V(t) = V_0 - \\frac{I}{C}t$$
+    * **Coulombic Efficiency ($\eta$):**
+      $$\eta = \\frac{Q_{\text{discharge}}}{Q_{\text{charge}}} \\times 100\\% = \\frac{\int I_{\text{dis}} dt}{\int I_{\text{chg}} dt} \\times 100\\%$$
 
-    **hν = 1240 / λ(nm)  eV**
+    ---
 
-    From Beer–Lambert law, the absorption coefficient can be obtained approximately from:
-
-    **α = 2.303 A / d**
-
-    where **A** is absorbance and **d** is sample thickness in cm.
-
-    For a direct allowed transition, the Tauc relation is:
-
-    **(αhν)² = B(hν − Eg)**
-
-    Plotting **(αhν)²** against **hν** and extrapolating the linear absorption region to the energy axis gives the
-    optical band gap **Eg**.
+    ### 2. Optical Absorption & Semiconductor Tauc Plot
+    * **Photon Energy ($h\\nu$):**
+      $$h\\nu = \\frac{h c}{\\lambda} \\approx \\frac{1239.84}{\\lambda \\text{ (in nm)}} \\text{ eV}$$
+    * **Beer-Lambert Law Absorption Coefficient ($\alpha$):**
+      $$\\alpha = 2.303 \\times \\frac{A}{d} \\quad \\text{(where } A = \\text{absorbance, } d = \\text{sample thickness in cm)}$$
+    * **Direct Allowed Tauc Relation:**
+      $$(\\alpha h\\nu)^2 = B(h\\nu - E_g)$$
+      *Plotting $(\\alpha h\\nu)^2$ vs $h\\nu$ and extending the straight line to the x-axis ($y=0$) gives the **Bandgap Energy ($E_g$)**.*
     """)
 
 # -----------------------------
-# Calculator
+# Page 5: Viva Quiz
 # -----------------------------
-elif page == "🧮 Calculator":
-    st.header("Calculator")
+elif page == "❓ Viva Voce Quiz":
+    st.header("🧪 Self-Assessment & Viva Practice")
+    st.write("Test your understanding for your upcoming practical viva examinations!")
 
-    tab1, tab2, tab3 = st.tabs(["Photon Energy", "Capacitor Energy", "Absorption Coefficient"])
+    q1 = st.radio("1. What unit is used to express the bandgap energy ($E_g$) of a semiconductor?",
+                  ["Joules (J)", "Electron-Volts (eV)", "Nanometers (nm)", "Farads (F)"])
+    if q1 == "Electron-Volts (eV)":
+        st.success("Correct! Band gaps are conventionally measured in electron-volts (eV).")
 
-    with tab1:
-        wl = st.number_input("Wavelength (nm)", 200.0, 2000.0, 378.0, 1.0)
-        st.success(f"Photon energy hν = **{1239.841984 / wl:.4f} eV**")
+    q2 = st.radio("2. In a Tauc plot for a direct band gap material, what is plotted on the Y-axis?",
+                  ["Absorbance (A)", "Absorption Coefficient (α)", "(αhν)²", "Photon Energy (hν)"])
+    if q2 == "(αhν)²":
+        st.success("Correct! $(\\alpha h\\nu)^2$ is plotted on the Y-axis against photon energy $h\\nu$ on the X-axis.")
 
-    with tab2:
-        C = st.number_input("Capacitance (F)", 0.1, 1_000_000.0, 1000.0, 10.0)
-        V = st.number_input("Voltage (V)", 0.01, 1000.0, 2.7, 0.1)
-        st.success(f"Stored energy E = **{0.5*C*V*V:.3f} J** = **{0.5*C*V*V/3600:.6f} Wh**")
-
-    with tab3:
-        A = st.number_input("Absorbance", 0.0001, 10.0, 0.50, 0.01)
-        d_mm = st.number_input("Thickness (mm)", 0.01, 100.0, 1.0, 0.01)
-        alpha = 2.302585 * A / (d_mm / 10)
-        st.success(f"Absorption coefficient α = **{alpha:.3f} cm⁻¹**")
+    q3 = st.radio("3. Why does terminal voltage suddenly drop the moment a battery starts discharging?",
+                  ["The battery runs out of charges", "Ohmic voltage drop across internal resistance (I × R_i)", "The temperature drops", "Capacitance decreases"])
+    if q3 == "Ohmic voltage drop across internal resistance (I × R_i)":
+        st.success("Correct! This is caused by internal resistance $R_i$.")
 
 st.markdown("---")
-st.caption("Virtual Lab Simulations • Engineering Chemistry / Applied Chemistry • Values are generated for educational purposes.")
+st.caption("Virtual Chemistry Lab • Developed for BTech Engineering Chemistry Courses")
