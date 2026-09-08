@@ -17,7 +17,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* Modern Glassmorphic Header */
+/* Modern Header */
 .main-header {
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
     padding: 22px 28px;
@@ -49,8 +49,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------
-# Helper Simulation Functions
+# Constants & Helper Functions
 # -----------------------------
+C_LIGHT = 3.0e8              # m/s
+H_PLANCK = 6.62607015e-34    # J s
+E_CHARGE = 1.602176634e-19   # C
+R_HYD = 1.0973731568539e7    # m^-1 (Rydberg Constant)
+
 SEMICONDUCTORS = {
     "ZnO (Zinc Oxide)": {"Eg": 3.28, "alpha0": 1.0e4, "use": "UV absorbers, sunscreens, transparent electronics"},
     "GaAs (Gallium Arsenide)": {"Eg": 1.42, "alpha0": 1.5e4, "use": "High-efficiency solar cells, optoelectronics"},
@@ -59,10 +64,59 @@ SEMICONDUCTORS = {
     "TiO₂ (Titanium Dioxide)": {"Eg": 3.20, "alpha0": 1.0e4, "use": "Photocatalysis, self-cleaning coatings"},
 }
 
+CATHODE_MATERIALS = {
+    "Cesium (Cs)": {"work_function": 2.14, "color": "#e2e8f0"},
+    "Potassium (K)": {"work_function": 2.29, "color": "#cbd5e1"},
+    "Sodium (Na)": {"work_function": 2.36, "color": "#94a3b8"},
+    "Calcium (Ca)": {"work_function": 2.87, "color": "#64748b"},
+    "Copper (Cu)": {"work_function": 4.70, "color": "#b45309"},
+}
+
+LAMPS_DATA = {
+    "Hydrogen (H₂) Lamp": {
+        "lines": [
+            {"name": "H-alpha (n=3→2)", "lambda_nm": 656.28, "color": "#ff0000", "intensity": 1.0},
+            {"name": "H-beta (n=4→2)", "lambda_nm": 486.13, "color": "#00ffff", "intensity": 0.75},
+            {"name": "H-gamma (n=5→2)", "lambda_nm": 434.05, "color": "#4b0082", "intensity": 0.50},
+            {"name": "H-delta (n=6→2)", "lambda_nm": 410.17, "color": "#8a2be2", "intensity": 0.35},
+        ]
+    },
+    "Mercury (Hg) Lamp": {
+        "lines": [
+            {"name": "Violet 1", "lambda_nm": 404.66, "color": "#8b00ff", "intensity": 0.6},
+            {"name": "Violet 2", "lambda_nm": 435.83, "color": "#0000ff", "intensity": 0.9},
+            {"name": "Blue-Green", "lambda_nm": 491.60, "color": "#00f5d4", "intensity": 0.3},
+            {"name": "Green", "lambda_nm": 546.07, "color": "#00ff00", "intensity": 1.0},
+            {"name": "Yellow Line 1", "lambda_nm": 576.96, "color": "#ffff00", "intensity": 0.7},
+            {"name": "Yellow Line 2", "lambda_nm": 579.07, "color": "#ffee00", "intensity": 0.7},
+        ]
+    }
+}
+
+def nm_to_rgb_color(wavelength):
+    """Maps wavelength (nm) to representative CSS color hex."""
+    wl = float(wavelength)
+    if wl < 420:
+        return "#7b1fa2"
+    elif wl < 450:
+        return "#3f51b5"
+    elif wl < 495:
+        return "#00bcd4"
+    elif wl < 570:
+        return "#4caf50"
+    elif wl < 590:
+        return "#ffeb3b"
+    elif wl < 620:
+        return "#ff9800"
+    elif wl <= 750:
+        return "#f44336"
+    return "#9e9e9e"
+
+# -----------------------------
+# Simulation Models
+# -----------------------------
 def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
-                r_internal, charge_current, discharge_current,
-                cutoff_v, time_step):
-    """Simulates charging and discharging curves with internal resistance effects."""
+                r_internal, charge_current, discharge_current, cutoff_v, time_step):
     if cell_type == "Lithium-ion Battery":
         def ocv(soc):
             soc = np.clip(soc, 0, 1)
@@ -73,8 +127,7 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
         n_charge = int(np.ceil(charge_seconds / time_step)) + 1
         t_charge = np.arange(n_charge) * time_step
         soc_charge = np.minimum(soc0 + charge_current * t_charge / 3600 / capacity_ah, 1.0)
-        v_charge = ocv(soc_charge) + r_internal * charge_current
-        v_charge = np.clip(v_charge, 2.8, 4.25)
+        v_charge = np.clip(ocv(soc_charge) + r_internal * charge_current, 2.8, 4.25)
 
         soc = 1.0
         rows = []
@@ -126,15 +179,14 @@ def battery_sim(cell_type, nominal_v, capacity_ah, capacitance_f,
             "Coulombic Efficiency": f"{efficiency:.1f}%",
         }
 
-    # Supercapacitor Simulation
+    # Supercapacitor
     v_min = max(cutoff_v, 0.05)
     v_max = nominal_v
     q_max = capacitance_f * v_max
     charge_seconds = q_max / max(charge_current, 1e-9)
     n_charge = int(np.ceil(charge_seconds / time_step)) + 1
     t_charge = np.arange(n_charge) * time_step
-    v_charge = np.minimum(v_min + charge_current * t_charge / capacitance_f, v_max) + r_internal * charge_current
-    v_charge = np.clip(v_charge, 0, v_max * 1.05)
+    v_charge = np.clip(np.minimum(v_min + charge_current * t_charge / capacitance_f, v_max) + r_internal * charge_current, 0, v_max * 1.05)
 
     t_max = max(capacitance_f * max(v_max - v_min, 0) / max(discharge_current, 1e-9), time_step)
     n_dis = int(np.ceil(t_max / time_step)) + 1
@@ -182,13 +234,13 @@ def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
     p = SEMICONDUCTORS[material_key]
     eg = p["Eg"]
     wl = np.arange(wl_min, wl_max + step_nm, step_nm)
-    hv = 1239.841984 / wl  # photon energy in eV
+    hv = 1239.841984 / wl  # eV
 
     excess = np.maximum(hv - eg, 0)
     alpha = p["alpha0"] * np.sqrt(excess) / np.maximum(hv, 1e-9) + p["alpha0"] * 0.002
     absorbance = alpha * (thickness_mm / 10.0) / 2.302585
     
-    rng = np.random.default_rng(42)  # Fixed default_rng typo
+    rng = np.random.default_rng(42)
     if noise_pct > 0:
         absorbance *= 1 + rng.normal(0, noise_pct / 100, len(absorbance))
     absorbance = np.clip(absorbance, 1e-5, None)
@@ -196,7 +248,6 @@ def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
     alpha_calc = 2.302585 * absorbance / (thickness_mm / 10.0)
     tauc = (alpha_calc * hv) ** 2
 
-    # Automatic linear fitting on steep region
     mask = (hv >= eg * 0.92) & (hv <= eg * 1.15) & (alpha_calc > p["alpha0"] * 0.01)
     x_fit, y_fit = hv[mask], tauc[mask]
     
@@ -224,13 +275,119 @@ def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
     }, (m, c)
 
 
+def photoelectric_sim(material_key, lambda_nm, intensity_percent, voltage_range):
+    work_func_ev = CATHODE_MATERIALS[material_key]["work_function"]
+    
+    freq = C_LIGHT / (lambda_nm * 1e-9)            # Hz
+    e_photon_ev = (H_PLANCK * freq) / E_CHARGE      # eV
+    stopping_v = max(0.0, e_photon_ev - work_func_ev)
+    
+    volts = np.linspace(voltage_range[0], voltage_range[1], 150)
+    
+    # Saturation photocurrent is proportional to light intensity
+    i_sat = intensity_percent * 0.1  # μA
+    
+    # Photocurrent vs Voltage curve model
+    currents = []
+    for v in volts:
+        if v <= -stopping_v:
+            currents.append(0.0)
+        else:
+            # Smooth transition to saturation current above stopping potential
+            i_val = i_sat * (1 - np.exp(-1.8 * (v + stopping_v)))
+            currents.append(max(0.0, float(i_val)))
+
+    df_iv = pd.DataFrame({
+        "Applied Voltage V (Volts)": volts,
+        "Photocurrent I (μA)": currents
+    })
+
+    # Frequency vs Stopping Potential across visible-UV spectrum (250nm - 650nm)
+    wl_test = np.linspace(250, 650, 20)
+    freq_test = C_LIGHT / (wl_test * 1e-9)
+    ev_test = (H_PLANCK * freq_test) / E_CHARGE
+    vs_test = np.maximum(0.0, ev_test - work_func_ev)
+    
+    # Fit line: Vs = (h/e)*nu - (Phi/e)
+    active_mask = vs_test > 0
+    if np.sum(active_mask) >= 3:
+        slope, intercept = np.polyfit(freq_test[active_mask], vs_test[active_mask], 1)
+        h_estimated = slope * E_CHARGE
+        phi_estimated = -intercept
+    else:
+        h_estimated = H_PLANCK
+        phi_estimated = work_func_ev
+        slope = H_PLANCK / E_CHARGE
+
+    df_h = pd.DataFrame({
+        "Frequency ν (10¹⁴ Hz)": freq_test / 1e14,
+        "Stopping Potential Vs (V)": vs_test,
+        "Wavelength λ (nm)": wl_test
+    })
+
+    return df_iv, df_h, {
+        "Photon Energy": f"{e_photon_ev:.2f} eV",
+        "Work Function (Φ)": f"{work_func_ev:.2f} eV",
+        "Stopping Voltage (Vs)": f"{stopping_v:.2f} V",
+        "Estimated Planck's h": f"{h_estimated:.3e} J·s",
+        "True Planck's h": f"{H_PLANCK:.3e} J·s",
+        "Percentage Error": f"{abs(h_estimated - H_PLANCK)/H_PLANCK * 100:.2f}%"
+    }, stopping_v, slope
+
+
+def spectrometer_sim(lamp_key, grating_lines_per_mm, order_m=1):
+    d_grating_m = (1.0 / grating_lines_per_mm) * 1e-3  # grating pitch in meters
+    lamp_lines = LAMPS_DATA[lamp_key]["lines"]
+    
+    results = []
+    for line in lamp_lines:
+        wl_m = line["lambda_nm"] * 1e-9
+        sin_theta = (order_m * wl_m) / d_grating_m
+        
+        if sin_theta <= 1.0:
+            theta_rad = np.arcsin(sin_theta)
+            theta_deg = np.degrees(theta_rad)
+        else:
+            theta_deg = np.nan
+            
+        # For Balmer Rydberg calculation (if Hydrogen)
+        ryd_val = np.nan
+        if "H-alpha" in line["name"]:
+            ryd_val = 1.0 / (wl_m * (1/4 - 1/9))
+        elif "H-beta" in line["name"]:
+            ryd_val = 1.0 / (wl_m * (1/4 - 1/16))
+        elif "H-gamma" in line["name"]:
+            ryd_val = 1.0 / (wl_m * (1/4 - 1/25))
+        elif "H-delta" in line["name"]:
+            ryd_val = 1.0 / (wl_m * (1/4 - 1/36))
+
+        results.append({
+            "Spectral Line": line["name"],
+            "Wavelength λ (nm)": line["lambda_nm"],
+            "Diffraction Angle θ (°)": theta_deg,
+            "Line Color": line["color"],
+            "Relative Intensity": line["intensity"],
+            "Rydberg Constant (m⁻¹)": ryd_val
+        })
+        
+    df = pd.DataFrame(results)
+    
+    calc_rydberg = df["Rydberg Constant (m⁻¹)"].dropna().mean() if "Hydrogen" in lamp_key else np.nan
+    
+    return df, {
+        "Grating Pitch (d)": f"{d_grating_m*1e6:.2f} µm",
+        "Lines / mm": f"{grating_lines_per_mm}",
+        "Calculated Rydberg R_H": f"{calc_rydberg:.4e} m⁻¹" if not np.isnan(calc_rydberg) else "N/A (Hg Lamp)",
+        "Theoretical R_H": f"{R_HYD:.4e} m⁻¹"
+    }
+
 # -----------------------------
 # App Layout & Header
 # -----------------------------
 st.markdown("""
 <div class="main-header">
     <h1>🧪 Virtual Engineering Chemistry Laboratory</h1>
-    <p>Interactive Simulations for First-Year BTech Students • Department of Chemistry</p>
+    <p>Interactive Simulations & Animated Models for First-Year BTech Students • Department of Chemistry</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -244,6 +401,8 @@ page = st.sidebar.radio(
         "🏠 Lab Overview",
         "🔋 Exp 1: Battery & Supercap Testing",
         "💡 Exp 2: Semiconductor Band Gap",
+        "⚡ Exp 3: Photoelectric Effect & Planck's Constant",
+        "🌈 Exp 4: Emission Spectrum (H₂ / Hg Lamp)",
         "📖 Theory & Formulations",
         "❓ Viva Voce Quiz",
     ],
@@ -252,34 +411,40 @@ page = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.info("""
 **Student Tip:** 
-Adjust parameters on the left controls, observe changes in real-time on interactive charts, and export data for your lab record reports.
+Adjust parameters on the left controls, observe real-time animations, and export generated data tables directly for your lab reports.
 """)
 
 # -----------------------------
 # Page 1: Overview
 # -----------------------------
 if page == "🏠 Lab Overview":
-    st.subheader("Welcome to the Virtual Chemistry Laboratory")
-    st.write("This interactive platform designed for **1st Year BTech Chemistry** helps you perform, visualize, and analyze core experiments virtually.")
+    st.subheader("Welcome to the Virtual Chemistry & Applied Physics Laboratory")
+    st.write("This interactive platform designed for **1st Year BTech Students** brings core experiments to life with dynamic physics engines and visual animations.")
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("""
-        ### 🔋 Experiment 1
-        **Energy Storage Systems**
+        ### 🔋 Experiment 1: Energy Storage
         - Compare **Lithium-ion Batteries** vs **Supercapacitors**.
         - Measure charging/discharging time curves.
-        - Observe **Internal Resistance ($R_i$ / ESR)** and Ohmic loss drops.
-        - Calculate **Coulombic Efficiency** & Energy Density.
+        - Observe **Internal Resistance ($R_i$ / ESR)** Ohmic loss drops.
+        
+        ### 💡 Experiment 2: Semiconductor Optics
+        - Determine bandgap ($E_g$) using **UV-Vis Spectrometry**.
+        - Plot and analyze **Tauc Plots** $((\\alpha h\\nu)^2 \\text{ vs } h\\nu)$.
+        - Find absorption edge cut-offs.
         """)
     with col2:
         st.markdown("""
-        ### 💡 Experiment 2
-        **Semiconductor Photophysics**
-        - Determine optical bandgap ($E_g$) using **UV-Vis Absorption Spectrometry**.
-        - Plot and analyze **Tauc Plots** $((\\alpha h\\nu)^2 \\text{ vs } h\\nu)$.
-        - Convert optical wavelengths to photon energy ($eV$).
-        - Extrapolate linear regions to find absorption cut-offs.
+        ### ⚡ Experiment 3: Photoelectric Effect
+        - Verify Einstein's Photoelectric equation ($E = h\\nu - \\Phi$).
+        - Estimate **Planck's constant ($h$)** from stopping potential $V_s$.
+        - **Interactive Particle Animation:** Watch photoelectron velocity and flux in real-time.
+
+        ### 🌈 Experiment 4: Atomic Emission Spectroscopy
+        - Measure atomic spectrum lines of **Hydrogen** & **Mercury** discharge lamps.
+        - Calculate **Rydberg Constant ($R_H$)** via diffraction grating.
+        - **Virtual Spectrometer Eyepiece:** Telescope angle sweep animation.
         """)
 
     st.markdown("---")
@@ -324,12 +489,9 @@ elif page == "🔋 Exp 1: Battery & Supercap Testing":
 
     with col_chart:
         st.subheader("📊 Live Characteristic Curves")
-        
-        # Interactive Plotly Chart
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                             subplot_titles=("Terminal Voltage vs Time", "Current vs Time"))
 
-        # Voltage curve
         chg_data = df[df["Phase"] == "Charging"]
         dis_data = df[df["Phase"] == "Discharging"]
 
@@ -338,7 +500,6 @@ elif page == "🔋 Exp 1: Battery & Supercap Testing":
         fig.add_trace(go.Scatter(x=dis_data["Time (s)"], y=dis_data["Voltage (V)"], 
                                  mode='lines', name='Discharging Phase', line=dict(color='#e53e3e', width=3)), row=1, col=1)
 
-        # Current curve
         fig.add_trace(go.Scatter(x=df["Time (s)"], y=df["Current (A)"], 
                                  mode='lines', name='Current (A)', line=dict(color='#319795', width=2)), row=2, col=1)
 
@@ -349,7 +510,6 @@ elif page == "🔋 Exp 1: Battery & Supercap Testing":
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # Metric Cards
     st.subheader("📋 Experimental Results")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Charging Duration", summary["Charge Time"])
@@ -367,7 +527,6 @@ elif page == "🔋 Exp 1: Battery & Supercap Testing":
 elif page == "💡 Exp 2: Semiconductor Band Gap":
     st.header("Experiment 2: Band Gap Energy Determination (UV-Vis)")
     
-    # HTML formatted callout prevents broken LaTeX parsing inside HTML blocks
     st.markdown("""
     <div class="concept-card">
     <b>💡 What are you testing?</b> When light shines on a semiconductor, photons with energy greater than the bandgap (<i>hν</i> ≥ <i>E<sub>g</sub></i>) get absorbed, kicking electrons from the valence band to the conduction band. 
@@ -412,26 +571,22 @@ elif page == "💡 Exp 2: Semiconductor Band Gap":
 
         with tab_tauc:
             fig_tauc = go.Figure()
-            # Raw scatter data
             fig_tauc.add_trace(go.Scatter(x=df["Photon Energy hν (eV)"], y=df["(αhν)² (eV²cm⁻²)"],
                                           mode='markers', name='Data Points', marker=dict(color='#3182ce', size=5)))
 
-            # Extrapolation line
             x_line = np.linspace(calc_eg - 0.3, calc_eg + 0.8, 50)
             y_line = m * x_line + c
             fig_tauc.add_trace(go.Scatter(x=x_line, y=y_line, mode='lines', name='Linear Extrapolation',
                                           line=dict(color='#e53e3e', width=2, dash='dash')))
 
-            # Vertical Band gap marker
             fig_tauc.add_vline(x=calc_eg, line_width=2, line_dash="dot", line_color="green",
                                annotation_text=f"Eg = {calc_eg:.2f} eV", annotation_position="top left")
 
             fig_tauc.update_layout(title="Tauc Plot: (αhν)² vs Photon Energy hν", xaxis_title="Photon Energy hν (eV)",
                                    yaxis_title="(αhν)² [eV² cm⁻²]", template="plotly_white", height=400,
-                                   yaxis_range=[0, df["(αhν)² (eV²cm⁻³)"].max() * 1.05 if "(αhν)² (eV²cm⁻³)" in df else df["(αhν)² (eV²cm⁻²)"].max() * 1.05])
+                                   yaxis_range=[0, df["(αhν)² (eV²cm⁻²)"].max() * 1.05])
             st.plotly_chart(fig_tauc, use_container_width=True)
 
-    # Result Summary
     st.subheader("📋 Derived Band Gap Analysis")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Theoretical Eg", summary["Theoretical Eg"])
@@ -444,54 +599,262 @@ elif page == "💡 Exp 2: Semiconductor Band Gap":
         st.download_button("📥 Download Optical Data (CSV)", df.to_csv(index=False), "semiconductor_bandgap_data.csv")
 
 # -----------------------------
-# Page 4: Theory
+# Page 4: Experiment 3 (Photoelectric)
+# -----------------------------
+elif page == "⚡ Exp 3: Photoelectric Effect & Planck's Constant":
+    st.header("Experiment 3: Photoelectric Effect & Planck's Constant")
+
+    st.markdown("""
+    <div class="concept-card">
+    <b>💡 What are you testing?</b> When light shines on a cathode metal plate, photons transfer energy to bound electrons. 
+    If photon energy <i>hν</i> exceeds the metal's work function <i>Φ</i>, photoelectrons fly to the anode with kinetic energy <i>K<sub>max</sub> = e V<sub>s</sub></i>.
+    By plotting Stopping Potential <i>V<sub>s</sub></i> vs Light Frequency <i>ν</i>, the slope gives <b>Planck's Constant (<i>h/e</i>)</b>!
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_ctrl, col_chart = st.columns([1, 2])
+
+    with col_ctrl:
+        st.subheader("🛠️ Control Panel")
+        selected_metal = st.selectbox("Cathode Material", list(CATHODE_MATERIALS.keys()))
+        lambda_nm = st.slider("Monochromatic Light Wavelength λ (nm)", 200, 700, 380, 5)
+        intensity = st.slider("Light Intensity (%)", 10, 100, 80, 5)
+        
+        v_min, v_max = st.slider("Applied Voltage Range V (Volts)", -3.0, 3.0, (-2.5, 2.0), 0.1)
+
+    df_iv, df_h, summary, stopping_v, slope = photoelectric_sim(selected_metal, lambda_nm, intensity, (v_min, v_max))
+    light_color = nm_to_rgb_color(lambda_nm)
+
+    with col_chart:
+        tab_anim, tab_iv, tab_planck = st.tabs(["🎬 Animated Photocell", "📊 Photocurrent (I vs V)", "📈 Planck's Constant (Vs vs ν)"])
+
+        with tab_anim:
+            st.markdown(f"**Live Visual Photocell Simulation** (Light: **{lambda_nm} nm**, Cathode: **{selected_metal}**)")
+            
+            # Interactive Animation of Photoelectrons moving Cathode -> Anode
+            fig_anim = go.Figure()
+
+            # Plates
+            fig_anim.add_shape(type="rect", x0=0.5, y0=0, x1=1.0, y1=10, fillcolor="#94a3b8", line=dict(color="#475569", width=2))
+            fig_anim.add_shape(type="rect", x0=9.0, y0=0, x1=9.5, y1=10, fillcolor="#cbd5e1", line=dict(color="#475569", width=2))
+
+            # Light Beam
+            fig_anim.add_shape(type="path", path=f"M -2 12 L 0.75 5 L -2 -2 Z", fillcolor=light_color, opacity=intensity/200.0, line=dict(width=0))
+
+            # Photoelectrons particles animation logic
+            work_func = CATHODE_MATERIALS[selected_metal]["work_function"]
+            photon_ev = 1239.84 / lambda_nm
+
+            if photon_ev >= work_func:
+                num_e = int((intensity / 10) * 8)
+                np.random.seed(42)
+                e_x = np.random.uniform(1.1, 8.8, num_e)
+                e_y = np.random.uniform(1.0, 9.0, num_e)
+                
+                fig_anim.add_trace(go.Scatter(
+                    x=e_x, y=e_y, mode='markers',
+                    marker=dict(size=10, color='#e11d48', symbol='circle'),
+                    name='Photoelectrons (e⁻)'
+                ))
+                annot_text = f"Emission Active! K_max = {photon_ev - work_func:.2f} eV"
+                annot_color = "#15803d"
+            else:
+                annot_text = f"No Emission (Photon Energy {photon_ev:.2f} eV < Work Function {work_func:.2f} eV)"
+                annot_color = "#b91c1c"
+
+            fig_anim.add_annotation(x=5, y=11, text=annot_text, showarrow=False, font=dict(size=14, color=annot_color, family="sans-serif"))
+            fig_anim.add_annotation(x=0.75, y=-1, text="Cathode (-)", showarrow=False, font=dict(size=12, color="black"))
+            fig_anim.add_annotation(x=9.25, y=-1, text="Anode (+)", showarrow=False, font=dict(size=12, color="black"))
+
+            fig_anim.update_layout(
+                xaxis=dict(range=[-3, 11], visible=False),
+                yaxis=dict(range=[-2, 12.5], visible=False),
+                height=350, margin=dict(l=10, r=10, t=10, b=10), template="plotly_white"
+            )
+            st.plotly_chart(fig_anim, use_container_width=True)
+
+        with tab_iv:
+            fig_iv = go.Figure()
+            fig_iv.add_trace(go.Scatter(x=df_iv["Applied Voltage V (Volts)"], y=df_iv["Photocurrent I (μA)"],
+                                        mode='lines', name='I-V Curve', line=dict(color='#0284c7', width=3)))
+            fig_iv.add_vline(x=-stopping_v, line_dash="dash", line_color="#ef4444",
+                             annotation_text=f"Vs = {stopping_v:.2f} V", annotation_position="top left")
+            fig_iv.update_layout(title="Photocurrent (I) vs Retarding/Accelerating Voltage (V)",
+                                  xaxis_title="Voltage V (Volts)", yaxis_title="Photocurrent I (μA)",
+                                  template="plotly_white", height=380)
+            st.plotly_chart(fig_iv, use_container_width=True)
+
+        with tab_planck:
+            fig_h = go.Figure()
+            fig_h.add_trace(go.Scatter(x=df_h["Frequency ν (10¹⁴ Hz)"], y=df_h["Stopping Potential Vs (V)"],
+                                       mode='markers', name='Data Points', marker=dict(size=8, color='#7c3aed')))
+            
+            # Linear Fit Line
+            x_fit = df_h["Frequency ν (10¹⁴ Hz)"]
+            y_fit = slope * (x_fit * 1e14) - (CATHODE_MATERIALS[selected_metal]["work_function"])
+            fig_h.add_trace(go.Scatter(x=x_fit, y=np.maximum(0, y_fit), mode='lines', name='Linear Fit (Slope = h/e)',
+                                       line=dict(color='#22c55e', width=2, dash='dash')))
+
+            fig_h.update_layout(title="Stopping Potential Vs vs Light Frequency ν",
+                                 xaxis_title="Frequency ν (× 10¹⁴ Hz)", yaxis_title="Stopping Voltage Vs (Volts)",
+                                 template="plotly_white", height=380)
+            st.plotly_chart(fig_h, use_container_width=True)
+
+    st.subheader("📋 Derived Experimental Values")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Photon Energy", summary["Photon Energy"])
+    m2.metric("Stopping Potential", summary["Stopping Voltage (Vs)"])
+    m3.metric("Estimated Planck's h", summary["Estimated Planck's h"])
+    m4.metric("Fit Accuracy Error", summary["Percentage Error"])
+
+    with st.expander("📄 View Photoelectric Data Table"):
+        st.dataframe(df_iv, use_container_width=True)
+        st.download_button("📥 Download I-V Data (CSV)", df_iv.to_csv(index=False), "photoelectric_data.csv")
+
+# -----------------------------
+# Page 5: Experiment 4 (Spectrometer)
+# -----------------------------
+elif page == "🌈 Exp 4: Emission Spectrum (H₂ / Hg Lamp)":
+    st.header("Experiment 4: Emission Spectrum & Rydberg Constant")
+
+    st.markdown("""
+    <div class="concept-card">
+    <b>💡 What are you testing?</b> Discrete spectral lines correspond to electron transitions between atomic energy levels. 
+    By passing light through a diffraction grating ($d \\sin\\theta = m\\lambda$), we measure the angular position $\\theta$ of each spectral line to determine wavelengths and calculate the <b>Rydberg Constant ($R_H$)</b>.
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_ctrl, col_chart = st.columns([1, 2])
+
+    with col_ctrl:
+        st.subheader("🛠️ Control Panel")
+        lamp_choice = st.selectbox("Gas Discharge Lamp", list(LAMPS_DATA.keys()))
+        grating_density = st.select_slider("Grating Lines / mm", options=[300, 500, 600, 1000], value=600)
+        
+        st.markdown("---")
+        st.markdown("**Virtual Spectrometer Telescope Sweep:**")
+        telescope_angle = st.slider("Telescope Angle θ (°)", 0.0, 50.0, 16.0, 0.1)
+
+    df_spec, summary = spectrometer_sim(lamp_choice, grating_density)
+
+    with col_chart:
+        tab_eyepiece, tab_bars = st.tabs(["🔭 Virtual Eyepiece View", "🌈 Full Diffraction Spectrum"])
+
+        with tab_eyepiece:
+            st.markdown(f"**Spectrometer Crosshair View** (Telescope set to **{telescope_angle:.1f}°**)")
+            
+            # Interactive Visual Eyepiece Circle
+            fig_eye = go.Figure()
+            
+            # Dark background field of view
+            fig_eye.add_shape(type="circle", x0=-10, y0=-10, x1=10, y1=10, fillcolor="#0f172a", line=dict(color="#334155", width=4))
+            
+            # Reticle Crosshairs
+            fig_eye.add_line(x0=-10, y0=0, x1=10, y1=0, line=dict(color="#475569", width=1, dash="dot"))
+            fig_eye.add_line(x0=0, y0=-10, x1=0, y1=10, line=dict(color="#ef4444", width=1.5)) # Vertical red crosshair line
+
+            # Check if any line is near telescope angle
+            visible_line_found = False
+            for _, row in df_spec.iterrows():
+                line_theta = row["Diffraction Angle θ (°)"]
+                if not np.isnan(line_theta):
+                    delta_angle = line_theta - telescope_angle
+                    if abs(delta_angle) <= 3.0: # Visible in field of view
+                        x_pos = delta_angle * 3.0 # scale to crosshair view
+                        fig_eye.add_line(x0=x_pos, y0=-8, x1=x_pos, y1=8, line=dict(color=row["Line Color"], width=4))
+                        fig_eye.add_annotation(x=x_pos, y=8.5, text=f"{row['Spectral Line']}<br>{row['Wavelength λ (nm)']} nm",
+                                               showarrow=False, font=dict(size=10, color="white"))
+                        visible_line_found = True
+
+            if not visible_line_found:
+                fig_eye.add_annotation(x=0, y=-8.5, text="Rotate telescope angle slider to align spectral lines with crosshair",
+                                       showarrow=False, font=dict(size=10, color="#94a3b8"))
+
+            fig_eye.update_layout(
+                xaxis=dict(range=[-11, 11], visible=False),
+                yaxis=dict(range=[-11, 11], visible=False),
+                height=350, margin=dict(l=10, r=10, t=10, b=10), template="plotly_white"
+            )
+            st.plotly_chart(fig_eye, use_container_width=True)
+
+        with tab_bars:
+            fig_bars = go.Figure()
+            for _, row in df_spec.iterrows():
+                if not np.isnan(row["Diffraction Angle θ (°)"]):
+                    fig_bars.add_trace(go.Bar(
+                        x=[row["Wavelength λ (nm)"]], y=[row["Relative Intensity"]],
+                        width=3.0, marker_color=row["Line Color"], name=row["Spectral Line"],
+                        hovertemplate=f"<b>{row['Spectral Line']}</b><br>Wavelength: {row['Wavelength λ (nm)']} nm<br>Angle θ: {row['Diffraction Angle θ (°)']:.2f}°"
+                    ))
+
+            fig_bars.update_layout(title="Emission Spectrum Wavelength Distribution",
+                                   xaxis_title="Wavelength λ (nm)", yaxis_title="Relative Line Intensity",
+                                   template="plotly_dark", height=380, xaxis_range=[380, 700])
+            st.plotly_chart(fig_bars, use_container_width=True)
+
+    st.subheader("📋 Spectral Line Calculations")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Grating Pitch (d)", summary["Grating Pitch (d)"])
+    m2.metric("Grating Specification", f"{grating_density} lines/mm")
+    m3.metric("Calculated Rydberg R_H", summary["Calculated Rydberg R_H"])
+    m4.metric("Theoretical R_H", summary["Theoretical R_H"])
+
+    with st.expander("📄 View Spectral Line Measurements Table"):
+        st.dataframe(df_spec, use_container_width=True)
+        st.download_button("📥 Download Spectrum Data (CSV)", df_spec.to_csv(index=False), "spectrometer_data.csv")
+
+# -----------------------------
+# Page 6: Theory
 # -----------------------------
 elif page == "📖 Theory & Formulations":
     st.header("Fundamental Equations & Concepts")
 
-    # Raw string r"""...""" prevents Python string escape conflicts with LaTeX math blocks
     st.markdown(r"""
-    ### 1. Lithium-Ion & Supercapacitor Characterization
-    * **Ohmic Resistance Drop (IR Drop):**
-      $$V_{\text{terminal}} = V_{\text{ocv}} \pm I \cdot R_i$$
-    * **Supercapacitor Capacitance Formula:**
-      $$Q = C \cdot V \implies V(t) = V_0 - \frac{I}{C}t$$
-    * **Coulombic Efficiency ($\eta$):**
-      $$\eta = \frac{Q_{\text{discharge}}}{Q_{\text{charge}}} \times 100\% = \frac{\int I_{\text{dis}} dt}{\int I_{\text{chg}} dt} \times 100\%$$
+    ### 1. Energy Storage (Li-ion & Supercapacitors)
+    * **Terminal Voltage:** $$V_{\text{terminal}} = V_{\text{ocv}} \pm I \cdot R_i$$
+    * **Supercapacitor Discharge:** $$V(t) = V_0 - \frac{I}{C}t$$
+    * **Coulombic Efficiency:** $$\eta = \frac{Q_{\text{discharge}}}{Q_{\text{charge}}} \times 100\%$$
 
     ---
 
-    ### 2. Optical Absorption & Semiconductor Tauc Plot
-    * **Photon Energy ($h\nu$):**
-      $$h\nu = \frac{h c}{\lambda} \approx \frac{1239.84}{\lambda \text{ (in nm)}} \text{ eV}$$
-    * **Beer-Lambert Law Absorption Coefficient ($\alpha$):**
-      $$\alpha = 2.303 \times \frac{A}{d} \quad \text{(where } A = \text{absorbance, } d = \text{sample thickness in cm)}$$
-    * **Direct Allowed Tauc Relation:**
-      $$(\alpha h\nu)^2 = B(h\nu - E_g)$$
-      *Plotting $(\alpha h\nu)^2$ vs $h\nu$ and extending the straight line to the x-axis ($y=0$) gives the **Bandgap Energy ($E_g$)**.*
+    ### 2. Semiconductor Optical Bandgap (UV-Vis)
+    * **Photon Energy:** $$h\nu = \frac{hc}{\lambda} \approx \frac{1239.84}{\lambda \text{ (in nm)}} \text{ eV}$$
+    * **Direct Allowed Tauc Relation:** $$(\alpha h\nu)^2 = B(h\nu - E_g)$$
+
+    ---
+
+    ### 3. Einstein's Photoelectric Effect
+    * **Photoelectric Equation:** $$K_{\max} = e V_s = h\nu - \Phi$$
+    * **Linear Fit for Planck's Constant:** $$V_s = \left(\frac{h}{e}\right)\nu - \frac{\Phi}{e}$$
+
+    ---
+
+    ### 4. Atomic Emission Spectroscopy & Grating Equation
+    * **Diffraction Grating Formula:** $$d \sin\theta = m \lambda \quad \implies \quad \theta = \arcsin\left(\frac{m\lambda}{d}\right)$$
+    * **Balmer Series Rydberg Formula (Hydrogen):** $$\frac{1}{\lambda} = R_H \left( \frac{1}{2^2} - \frac{1}{n^2} \right) \quad \text{for } n = 3, 4, 5, 6$$
     """)
 
 # -----------------------------
-# Page 5: Viva Quiz
+# Page 7: Viva Quiz
 # -----------------------------
 elif page == "❓ Viva Voce Quiz":
     st.header("🧪 Self-Assessment & Viva Practice")
-    st.write("Test your understanding for your upcoming practical viva examinations!")
+    st.write("Test your understanding across all four virtual experiments!")
 
-    q1 = st.radio("1. What unit is used to express the bandgap energy ($E_g$) of a semiconductor?",
-                  ["Joules (J)", "Electron-Volts (eV)", "Nanometers (nm)", "Farads (F)"])
-    if q1 == "Electron-Volts (eV)":
-        st.success("Correct! Band gaps are conventionally measured in electron-volts (eV).")
+    q1 = st.radio("1. What does the slope of the Stopping Potential ($V_s$) vs Frequency ($\nu$) plot represent?",
+                  ["Work function (Φ)", "Planck's constant divided by electron charge (h/e)", "Threshold frequency", "Speed of light"])
+    if q1 == "Planck's constant divided by electron charge (h/e)":
+        st.success("Correct! The slope equals $h/e$.")
 
-    q2 = st.radio("2. In a Tauc plot for a direct band gap material, what is plotted on the Y-axis?",
-                  ["Absorbance (A)", "Absorption Coefficient (α)", "(αhν)²", "Photon Energy (hν)"])
-    if q2 == "(αhν)²":
-        st.success("Correct! $(\\alpha h\\nu)^2$ is plotted on the Y-axis against photon energy $h\\nu$ on the X-axis.")
+    q2 = st.radio("2. In the Balmer series of Hydrogen emission, which spectral transition gives the red H-alpha line?",
+                  ["n = 3 → n = 2", "n = 4 → n = 2", "n = 2 → n = 1", "n = 5 → n = 2"])
+    if q2 == "n = 3 → n = 2":
+        st.success("Correct! $n=3 \rightarrow n=2$ emits $H_\\alpha$ at $\\approx 656.3\\text{ nm}$.")
 
-    q3 = st.radio("3. Why does terminal voltage suddenly drop the moment a battery starts discharging?",
-                  ["The battery runs out of charges", "Ohmic voltage drop across internal resistance (I × R_i)", "The temperature drops", "Capacitance decreases"])
-    if q3 == "Ohmic voltage drop across internal resistance (I × R_i)":
-        st.success("Correct! This is caused by internal resistance $R_i$.")
+    q3 = st.radio("3. Why does terminal voltage jump or drop immediately when switching between charging and discharging a battery?",
+                  ["Chemical degradation", "Ohmic drop across internal resistance (I × R_i)", "Capacitance loss", "Temperature shift"])
+    if q3 == "Ohmic drop across internal resistance (I × R_i)":
+        st.success("Correct! $IR_i$ drop causes the instantaneous step change.")
 
 st.markdown("---")
-st.caption("Virtual Chemistry Lab • Developed for BTech Engineering Chemistry Courses")
+st.caption("Virtual Chemistry & Physics Laboratory • Developed for First-Year BTech Engineering Courses")
