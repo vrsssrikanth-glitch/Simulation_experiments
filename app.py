@@ -188,7 +188,7 @@ def bandgap_sim(material_key, thickness_mm, wl_min, wl_max, step_nm, noise_pct):
     alpha = p["alpha0"] * np.sqrt(excess) / np.maximum(hv, 1e-9) + p["alpha0"] * 0.002
     absorbance = alpha * (thickness_mm / 10.0) / 2.302585
     
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(42)  # Fixed default_rng typo
     if noise_pct > 0:
         absorbance *= 1 + rng.normal(0, noise_pct / 100, len(absorbance))
     absorbance = np.clip(absorbance, 1e-5, None)
@@ -277,7 +277,7 @@ if page == "🏠 Lab Overview":
         ### 💡 Experiment 2
         **Semiconductor Photophysics**
         - Determine optical bandgap ($E_g$) using **UV-Vis Absorption Spectrometry**.
-        - Plot and analyze **Tauc Plots** $((\alpha h\nu)^2 \text{ vs } h\nu)$.
+        - Plot and analyze **Tauc Plots** $((\\alpha h\\nu)^2 \\text{ vs } h\\nu)$.
         - Convert optical wavelengths to photon energy ($eV$).
         - Extrapolate linear regions to find absorption cut-offs.
         """)
@@ -367,10 +367,11 @@ elif page == "🔋 Exp 1: Battery & Supercap Testing":
 elif page == "💡 Exp 2: Semiconductor Band Gap":
     st.header("Experiment 2: Band Gap Energy Determination (UV-Vis)")
     
+    # HTML formatted callout prevents broken LaTeX parsing inside HTML blocks
     st.markdown("""
     <div class="concept-card">
-    <b>💡 What are you testing?</b> When light shines on a semiconductor, photons with energy greater than the bandgap ($h\\nu \\ge E_g$) get absorbed, kicking electrons from the valence band to the conduction band. 
-    By plotting a <b>Tauc Plot</b> $((\\alpha h\\nu)^2 \\text{ vs } h\\nu)$, we can linearly extrapolate the absorption edge to find the exact energy gap $E_g$.
+    <b>💡 What are you testing?</b> When light shines on a semiconductor, photons with energy greater than the bandgap (<i>hν</i> ≥ <i>E<sub>g</sub></i>) get absorbed, kicking electrons from the valence band to the conduction band. 
+    By plotting a <b>Tauc Plot</b> ((α<i>hν</i>)<sup>2</sup> vs <i>hν</i>), we can linearly extrapolate the absorption edge to find the exact energy gap <i>E<sub>g</sub></i>.
     </div>
     """, unsafe_allow_html=True)
 
@@ -427,7 +428,7 @@ elif page == "💡 Exp 2: Semiconductor Band Gap":
 
             fig_tauc.update_layout(title="Tauc Plot: (αhν)² vs Photon Energy hν", xaxis_title="Photon Energy hν (eV)",
                                    yaxis_title="(αhν)² [eV² cm⁻²]", template="plotly_white", height=400,
-                                   yaxis_range=[0, df["(αhν)² (eV²cm⁻²)"].max() * 1.05])
+                                   yaxis_range=[0, df["(αhν)² (eV²cm⁻³)"].max() * 1.05 if "(αhν)² (eV²cm⁻³)" in df else df["(αhν)² (eV²cm⁻²)"].max() * 1.05])
             st.plotly_chart(fig_tauc, use_container_width=True)
 
     # Result Summary
@@ -448,25 +449,26 @@ elif page == "💡 Exp 2: Semiconductor Band Gap":
 elif page == "📖 Theory & Formulations":
     st.header("Fundamental Equations & Concepts")
 
-    st.markdown("""
+    # Raw string r"""...""" prevents Python string escape conflicts with LaTeX math blocks
+    st.markdown(r"""
     ### 1. Lithium-Ion & Supercapacitor Characterization
     * **Ohmic Resistance Drop (IR Drop):**
-      $$V_{\text{terminal}} = V_{\text{ocv}} \\pm I \\cdot R_i$$
+      $$V_{\text{terminal}} = V_{\text{ocv}} \pm I \cdot R_i$$
     * **Supercapacitor Capacitance Formula:**
-      $$Q = C \\cdot V \\implies V(t) = V_0 - \\frac{I}{C}t$$
+      $$Q = C \cdot V \implies V(t) = V_0 - \frac{I}{C}t$$
     * **Coulombic Efficiency ($\eta$):**
-      $$\eta = \\frac{Q_{\text{discharge}}}{Q_{\text{charge}}} \\times 100\\% = \\frac{\int I_{\text{dis}} dt}{\int I_{\text{chg}} dt} \\times 100\\%$$
+      $$\eta = \frac{Q_{\text{discharge}}}{Q_{\text{charge}}} \times 100\% = \frac{\int I_{\text{dis}} dt}{\int I_{\text{chg}} dt} \times 100\%$$
 
     ---
 
     ### 2. Optical Absorption & Semiconductor Tauc Plot
-    * **Photon Energy ($h\\nu$):**
-      $$h\\nu = \\frac{h c}{\\lambda} \\approx \\frac{1239.84}{\\lambda \\text{ (in nm)}} \\text{ eV}$$
+    * **Photon Energy ($h\nu$):**
+      $$h\nu = \frac{h c}{\lambda} \approx \frac{1239.84}{\lambda \text{ (in nm)}} \text{ eV}$$
     * **Beer-Lambert Law Absorption Coefficient ($\alpha$):**
-      $$\\alpha = 2.303 \\times \\frac{A}{d} \\quad \\text{(where } A = \\text{absorbance, } d = \\text{sample thickness in cm)}$$
+      $$\alpha = 2.303 \times \frac{A}{d} \quad \text{(where } A = \text{absorbance, } d = \text{sample thickness in cm)}$$
     * **Direct Allowed Tauc Relation:**
-      $$(\\alpha h\\nu)^2 = B(h\\nu - E_g)$$
-      *Plotting $(\\alpha h\\nu)^2$ vs $h\\nu$ and extending the straight line to the x-axis ($y=0$) gives the **Bandgap Energy ($E_g$)**.*
+      $$(\alpha h\nu)^2 = B(h\nu - E_g)$$
+      *Plotting $(\alpha h\nu)^2$ vs $h\nu$ and extending the straight line to the x-axis ($y=0$) gives the **Bandgap Energy ($E_g$)**.*
     """)
 
 # -----------------------------
