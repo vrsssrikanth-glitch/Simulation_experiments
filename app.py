@@ -260,7 +260,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
 <h1>🔬 Virtual Lab Simulations</h1>
-<p>Engineering Physics / Applied Physics Laboratory</p>
+<p>Engineering Chemistry / Applied Chemistry Laboratory</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -395,7 +395,7 @@ elif page == "🔋 1. Charge–Discharge Characteristics":
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("⬇ Download Charge–Discharge CSV", csv, "charge_discharge_simulation.csv", "text/csv")
 
-    st.markdown("**Physics model:** Li-ion simulation uses a SOC-dependent open-circuit-voltage model plus internal-resistance polarization. The supercapacitor uses \(V=Q/C\) with ESR. These are educational models and do not represent a particular commercial cell.")
+    st.markdown("**Chemistry model:** Li-ion simulation uses a SOC-dependent open-circuit-voltage model plus internal-resistance polarization. The supercapacitor uses \(V=Q/C\) with ESR. These are educational models and do not represent a particular commercial cell.")
 
 # -----------------------------
 # Experiment 2
@@ -522,7 +522,7 @@ elif page == "📖 Theory":
 # Calculator
 # -----------------------------
 elif page == "🧮 Calculator":
-    st.header("Physics Calculator")
+    st.header("Calculator")
 
     tab1, tab2, tab3 = st.tabs(["Photon Energy", "Capacitor Energy", "Absorption Coefficient"])
 
