@@ -284,16 +284,13 @@ def photoelectric_sim(material_key, lambda_nm, intensity_percent, voltage_range)
     
     volts = np.linspace(voltage_range[0], voltage_range[1], 150)
     
-    # Saturation photocurrent is proportional to light intensity
     i_sat = intensity_percent * 0.1  # μA
     
-    # Photocurrent vs Voltage curve model
     currents = []
     for v in volts:
         if v <= -stopping_v:
             currents.append(0.0)
         else:
-            # Smooth transition to saturation current above stopping potential
             i_val = i_sat * (1 - np.exp(-1.8 * (v + stopping_v)))
             currents.append(max(0.0, float(i_val)))
 
@@ -302,13 +299,11 @@ def photoelectric_sim(material_key, lambda_nm, intensity_percent, voltage_range)
         "Photocurrent I (μA)": currents
     })
 
-    # Frequency vs Stopping Potential across visible-UV spectrum (250nm - 650nm)
     wl_test = np.linspace(250, 650, 20)
     freq_test = C_LIGHT / (wl_test * 1e-9)
     ev_test = (H_PLANCK * freq_test) / E_CHARGE
     vs_test = np.maximum(0.0, ev_test - work_func_ev)
     
-    # Fit line: Vs = (h/e)*nu - (Phi/e)
     active_mask = vs_test > 0
     if np.sum(active_mask) >= 3:
         slope, intercept = np.polyfit(freq_test[active_mask], vs_test[active_mask], 1)
@@ -350,7 +345,6 @@ def spectrometer_sim(lamp_key, grating_lines_per_mm, order_m=1):
         else:
             theta_deg = np.nan
             
-        # For Balmer Rydberg calculation (if Hydrogen)
         ryd_val = np.nan
         if "H-alpha" in line["name"]:
             ryd_val = 1.0 / (wl_m * (1/4 - 1/9))
@@ -371,7 +365,6 @@ def spectrometer_sim(lamp_key, grating_lines_per_mm, order_m=1):
         })
         
     df = pd.DataFrame(results)
-    
     calc_rydberg = df["Rydberg Constant (m⁻¹)"].dropna().mean() if "Hydrogen" in lamp_key else np.nan
     
     return df, {
@@ -631,7 +624,6 @@ elif page == "⚡ Exp 3: Photoelectric Effect & Planck's Constant":
         with tab_anim:
             st.markdown(f"**Live Visual Photocell Simulation** (Light: **{lambda_nm} nm**, Cathode: **{selected_metal}**)")
             
-            # Interactive Animation of Photoelectrons moving Cathode -> Anode
             fig_anim = go.Figure()
 
             # Plates
@@ -641,7 +633,6 @@ elif page == "⚡ Exp 3: Photoelectric Effect & Planck's Constant":
             # Light Beam
             fig_anim.add_shape(type="path", path=f"M -2 12 L 0.75 5 L -2 -2 Z", fillcolor=light_color, opacity=intensity/200.0, line=dict(width=0))
 
-            # Photoelectrons particles animation logic
             work_func = CATHODE_MATERIALS[selected_metal]["work_function"]
             photon_ev = 1239.84 / lambda_nm
 
@@ -689,7 +680,6 @@ elif page == "⚡ Exp 3: Photoelectric Effect & Planck's Constant":
             fig_h.add_trace(go.Scatter(x=df_h["Frequency ν (10¹⁴ Hz)"], y=df_h["Stopping Potential Vs (V)"],
                                        mode='markers', name='Data Points', marker=dict(size=8, color='#7c3aed')))
             
-            # Linear Fit Line
             x_fit = df_h["Frequency ν (10¹⁴ Hz)"]
             y_fit = slope * (x_fit * 1e14) - (CATHODE_MATERIALS[selected_metal]["work_function"])
             fig_h.add_trace(go.Scatter(x=x_fit, y=np.maximum(0, y_fit), mode='lines', name='Linear Fit (Slope = h/e)',
@@ -743,25 +733,23 @@ elif page == "🌈 Exp 4: Emission Spectrum (H₂ / Hg Lamp)":
         with tab_eyepiece:
             st.markdown(f"**Spectrometer Crosshair View** (Telescope set to **{telescope_angle:.1f}°**)")
             
-            # Interactive Visual Eyepiece Circle
             fig_eye = go.Figure()
             
             # Dark background field of view
             fig_eye.add_shape(type="circle", x0=-10, y0=-10, x1=10, y1=10, fillcolor="#0f172a", line=dict(color="#334155", width=4))
             
-            # Reticle Crosshairs
-            fig_eye.add_line(x0=-10, y0=0, x1=10, y1=0, line=dict(color="#475569", width=1, dash="dot"))
-            fig_eye.add_line(x0=0, y0=-10, x1=0, y1=10, line=dict(color="#ef4444", width=1.5)) # Vertical red crosshair line
+            # Reticle Crosshairs (Using add_shape type="line" instead of add_line)
+            fig_eye.add_shape(type="line", x0=-10, y0=0, x1=10, y1=0, line=dict(color="#475569", width=1, dash="dot"))
+            fig_eye.add_shape(type="line", x0=0, y0=-10, x1=0, y1=10, line=dict(color="#ef4444", width=1.5))
 
-            # Check if any line is near telescope angle
             visible_line_found = False
             for _, row in df_spec.iterrows():
                 line_theta = row["Diffraction Angle θ (°)"]
                 if not np.isnan(line_theta):
                     delta_angle = line_theta - telescope_angle
-                    if abs(delta_angle) <= 3.0: # Visible in field of view
-                        x_pos = delta_angle * 3.0 # scale to crosshair view
-                        fig_eye.add_line(x0=x_pos, y0=-8, x1=x_pos, y1=8, line=dict(color=row["Line Color"], width=4))
+                    if abs(delta_angle) <= 3.0:
+                        x_pos = delta_angle * 3.0
+                        fig_eye.add_shape(type="line", x0=x_pos, y0=-8, x1=x_pos, y1=8, line=dict(color=row["Line Color"], width=4))
                         fig_eye.add_annotation(x=x_pos, y=8.5, text=f"{row['Spectral Line']}<br>{row['Wavelength λ (nm)']} nm",
                                                showarrow=False, font=dict(size=10, color="white"))
                         visible_line_found = True
